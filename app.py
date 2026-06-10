@@ -421,6 +421,34 @@ articles_to_show = filter_by_search_keyword(articles_to_show, search_keyword)
 
 st.write(f"화면에 표시되는 기사 수: **{len(articles_to_show)}개**")
 
+st.caption(
+    "참고: 관련 기사 필터 키워드는 '동남아·ASEAN 관련 기사인지' 판단하는 기준이고, "
+    "주제 키워드는 그 기사를 정치/외교, 안보, 경제/무역 등으로 나누는 기준입니다."
+)
+
+with st.expander("주제 분류 기준 보기"):
+    if selected_topic == "전체 주제":
+        st.write("각 주제는 아래 키워드 중 하나가 기사 제목이나 요약문에 포함될 때 자동으로 붙습니다.")
+
+        for topic_name, topic_keywords in TOPICS.items():
+            st.markdown(f"**{topic_name}**")
+            st.write(", ".join(topic_keywords))
+
+        st.markdown("**기타**")
+        st.write("위 주제 키워드가 하나도 감지되지 않은 기사입니다.")
+
+    elif selected_topic == "기타":
+        st.write("기타는 아래 주제 키워드가 하나도 감지되지 않은 기사입니다.")
+
+        for topic_name, topic_keywords in TOPICS.items():
+            st.markdown(f"**{topic_name}**")
+            st.write(", ".join(topic_keywords))
+
+    else:
+        st.write(f"현재 선택한 주제는 **{selected_topic}**입니다.")
+        st.write("이 주제는 아래 키워드 중 하나가 기사 제목이나 요약문에 포함될 때 붙습니다.")
+        st.info(", ".join(TOPICS[selected_topic]))
+
 with st.expander("현재 사용 중인 RSS 출처 보기"):
     for feed in FEEDS:
         st.write(f"- {feed['name']}")
