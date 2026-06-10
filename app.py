@@ -15,6 +15,27 @@ st.set_page_config(
 RSS_URL = "https://thediplomat.com/feed/"
 
 
+KEYWORDS = [
+    "ASEAN",
+    "Southeast Asia",
+    "SEA",
+    "Myanmar",
+    "Vietnam",
+    "Thailand",
+    "Indonesia",
+    "Malaysia",
+    "Philippines",
+    "Singapore",
+    "Cambodia",
+    "Laos",
+    "Brunei",
+    "Timor-Leste",
+    "East Timor",
+    "South China Sea",
+    "Mekong",
+]
+
+
 def clean_text(text):
     """RSS 요약문에 들어 있는 HTML 태그를 간단히 제거합니다."""
     if not text:
@@ -25,25 +46,51 @@ def clean_text(text):
     return text.strip()
 
 
+def find_matched_keywords(title, summary):
+    """제목과 요약문에서 동남아·ASEAN 관련 키워드를 찾습니다."""
+    text = f"{title} {summary}".lower()
+
+    matched = []
+
+    for keyword in KEYWORDS:
+        if keyword.lower() in text:
+            matched.append(keyword)
+
+    return matched
+
+
 @st.cache_data(ttl=1800)
 def load_rss():
-    """RSS 피드에서 기사 목록을 가져옵니다."""
+    """RSS 피드에서 기사 목록을 가져오고, 관련 기사만 골라냅니다."""
     feed = feedparser.parse(RSS_URL)
 
-    articles = []
+    all_articles = []
+    filtered_articles = []
 
-    for entry in feed.entries[:10]:
+    for entry in feed.entries[:30]:
+        title = entry.get("title", "제목 없음")
+        summary = clean_text(entry.get("summary", ""))
+        url = entry.get("link", "")
+        published = entry.get("published", "날짜 정보 없음")
+        source = feed.feed.get("title", "RSS Feed")
+
+        matched_keywords = find_matched_keywords(title, summary)
+
         article = {
-            "title": entry.get("title", "제목 없음"),
-            "source": feed.feed.get("title", "RSS Feed"),
-            "published": entry.get("published", "날짜 정보 없음"),
-            "summary": clean_text(entry.get("summary", "")),
-            "url": entry.get("link", "")
+            "title": title,
+            "source": source,
+            "published": published,
+            "summary": summary,
+            "url": url,
+            "matched_keywords": matched_keywords,
         }
 
-        articles.append(article)
+        all_articles.append(article)
 
-    return articles
+        if len(matched_keywords) > 0:
+            filtered_articles.append(article)
+
+    return all_articles, filtered_articles
 
 
 st.title("ASEAN / Southeast Asia News Monitor")
@@ -54,22 +101,32 @@ st.write(
 
 st.divider()
 
-st.subheader("RSS 테스트")
+st.subheader("ASEAN / 동남아 관련 뉴스")
 
-st.caption("오늘은 실제 RSS 피드에서 최신 기사 목록을 가져오는 단계입니다.")
+st.caption("RSS에서 가져온 기사 중, 관련 키워드가 포함된 기사만 보여줍니다.")
 
-articles = load_rss()
+all_articles, filtered_articles = load_rss()
 
-if len(articles) == 0:
-    st.error("RSS에서 기사를 가져오지 못했습니다.")
+st.write(f"전체 RSS 기사 수: **{len(all_articles)}개**")
+st.write(f"동남아·ASEAN 관련 기사 수: **{len(filtered_articles)}개**")
+
+with st.expander("현재 사용 중인 필터 키워드 보기"):
+    st.write(", ".join(KEYWORDS))
+
+st.divider()
+
+if len(filtered_articles) == 0:
+    st.warning("현재 RSS 기사 중에서 동남아·ASEAN 관련 키워드가 들어간 기사를 찾지 못했습니다.")
+    st.info("RSS 연결이 실패한 것은 아닙니다. 이번에 가져온 기사들 중 조건에 맞는 기사가 없다는 뜻입니다.")
 else:
-    st.success(f"RSS에서 기사 {len(articles)}개를 가져왔습니다.")
-
-    for article in articles:
+    for article in filtered_articles:
         with st.container():
             st.markdown(f"### {article['title']}")
             st.write(f"**출처:** {article['source']}")
             st.write(f"**발행일:** {article['published']}")
+
+            if article["matched_keywords"]:
+                st.write(f"**감지된 키워드:** {', '.join(article['matched_keywords'])}")
 
             if article["summary"]:
                 st.write(article["summary"])
