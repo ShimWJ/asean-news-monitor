@@ -99,6 +99,83 @@ APP_TOPICS = {
 }
 
 
+REGION_KEYWORDS = {
+    "ASEAN": [
+        "ASEAN",
+        "Association of Southeast Asian Nations",
+    ],
+    "동남아시아": [
+        "Southeast Asia",
+        "South-East Asia",
+        "Southeast Asian",
+        "South-East Asian",
+    ],
+    "미얀마": [
+        "Myanmar",
+        "Burma",
+        "Naypyidaw",
+        "Yangon",
+        "Rohingya",
+        "junta",
+        "NUG",
+        "NLD",
+    ],
+    "베트남": [
+        "Vietnam",
+        "Viet Nam",
+        "Hanoi",
+        "Ho Chi Minh",
+    ],
+    "태국": [
+        "Thailand",
+        "Bangkok",
+    ],
+    "인도네시아": [
+        "Indonesia",
+        "Jakarta",
+    ],
+    "말레이시아": [
+        "Malaysia",
+        "Kuala Lumpur",
+    ],
+    "필리핀": [
+        "Philippines",
+        "Manila",
+    ],
+    "싱가포르": [
+        "Singapore",
+    ],
+    "캄보디아": [
+        "Cambodia",
+        "Phnom Penh",
+    ],
+    "라오스": [
+        "Laos",
+        "Lao PDR",
+        "Vientiane",
+    ],
+    "브루나이": [
+        "Brunei",
+        "Bandar Seri Begawan",
+    ],
+    "동티모르": [
+        "Timor-Leste",
+        "East Timor",
+        "Dili",
+    ],
+    "남중국해": [
+        "South China Sea",
+    ],
+    "메콩": [
+        "Mekong",
+    ],
+    "말라카 해협": [
+        "Malacca Strait",
+        "Strait of Malacca",
+    ],
+}
+
+
 st.set_page_config(
     page_title="ASEAN News Monitor",
     page_icon="🌏",
@@ -107,15 +184,28 @@ st.set_page_config(
 
 
 def get_secret(name, default=""):
-    """Streamlit Secrets에서 값을 안전하게 가져옵니다."""
+    """Streamlit Secrets에서 값을 가져옵니다."""
     try:
         return st.secrets.get(name, default)
     except Exception:
         return default
 
 
+def split_values(text):
+    """쉼표로 이어진 텍스트를 목록으로 바꿉니다."""
+    values = []
+
+    for item in str(text).split(","):
+        item = item.strip()
+
+        if item:
+            values.append(item)
+
+    return values
+
+
 def classify_topics(title, summary):
-    """기사 제목과 요약문을 기준으로 앱 화면용 주제를 다시 분류합니다."""
+    """기사 제목과 요약문을 기준으로 주제를 분류합니다."""
     text = f"{title} {summary}".lower()
 
     matched_topics = []
@@ -130,6 +220,24 @@ def classify_topics(title, summary):
         matched_topics.append("기타")
 
     return matched_topics
+
+
+def classify_regions(title, summary, matched_keywords):
+    """기사 제목, 요약문, 감지 키워드를 기준으로 국가/지역을 분류합니다."""
+    text = f"{title} {summary} {matched_keywords}".lower()
+
+    matched_regions = []
+
+    for region_name, region_keywords in REGION_KEYWORDS.items():
+        for keyword in region_keywords:
+            if keyword.lower() in text:
+                matched_regions.append(region_name)
+                break
+
+    if len(matched_regions) == 0:
+        matched_regions.append("기타")
+
+    return matched_regions
 
 
 def trigger_github_workflow():
@@ -244,6 +352,17 @@ def load_saved_articles():
         axis=1,
     )
 
+    df["app_regions"] = df.apply(
+        lambda row: ", ".join(
+            classify_regions(
+                row["title"],
+                row["summary"],
+                row["matched_keywords"],
+            )
+        ),
+        axis=1,
+    )
+
     df = df.sort_values(
         by="published_datetime",
         ascending=False,
@@ -279,10 +398,22 @@ def filter_by_topic(df, selected_topic):
         return df
 
     def has_topic(topics_text):
-        topics = [topic.strip() for topic in str(topics_text).split(",")]
+        topics = split_values(topics_text)
         return selected_topic in topics
 
     return df[df["app_topics"].apply(has_topic)]
+
+
+def filter_by_region(df, selected_region):
+    """선택한 국가/지역에 맞는 기사만 남깁니다."""
+    if selected_region == "전체 보기":
+        return df
+
+    def has_region(regions_text):
+        regions = split_values(regions_text)
+        return selected_region in regions
+
+    return df[df["app_regions"].apply(has_region)]
 
 
 def filter_by_search_keyword(df, search_keyword):
@@ -302,28 +433,197 @@ def filter_by_search_keyword(df, search_keyword):
         + df["matched_keywords"].astype(str)
         + " "
         + df["app_topics"].astype(str)
+        + " "
+        + df["app_regions"].astype(str)
     ).str.lower()
 
     return df[search_area.str.contains(search_keyword, regex=False, na=False)]
 
 
-def count_topics(df):
-    """현재 기사 목록에서 주제별 기사 수를 셉니다."""
-    topic_counts = {}
+def count_items(df, column_name):
+    """쉼표로 묶인 항목들의 개수를 셉니다."""
+    counts = {}
 
-    for topics_text in df["app_topics"]:
-        topics = [topic.strip() for topic in str(topics_text).split(",")]
+    if column_name not in df.columns:
+        return counts
 
-        for topic in topics:
-            if topic == "":
+    for text in df[column_name]:
+        items = split_values(text)
+
+        for item in items:
+            if item == "":
                 continue
 
-            if topic not in topic_counts:
-                topic_counts[topic] = 0
+            if item not in counts:
+                counts[item] = 0
 
-            topic_counts[topic] += 1
+            counts[item] += 1
 
-    return topic_counts
+    return counts
+
+
+def get_top_items(df, column_name, limit=5):
+    """특정 열에서 가장 많이 나온 항목을 가져옵니다."""
+    counts = count_items(df, column_name)
+
+    sorted_items = sorted(
+        counts.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+
+    return sorted_items[:limit]
+
+
+def get_summary_base_df(df):
+    """요약 박스에 사용할 기준 데이터프레임을 정합니다."""
+    recent_7_df = filter_by_period(df, "최근 7일")
+
+    if len(recent_7_df) > 0:
+        return recent_7_df, "최근 7일"
+
+    recent_30_df = filter_by_period(df, "최근 30일")
+
+    if len(recent_30_df) > 0:
+        return recent_30_df, "최근 30일"
+
+    return df, "전체 저장 기사"
+
+
+def make_issue_candidates(df, limit=5):
+    """국가/지역 + 주제 조합으로 주요 이슈 후보를 만듭니다."""
+    candidates = {}
+
+    for _, row in df.iterrows():
+        regions = split_values(row["app_regions"])
+        topics = split_values(row["app_topics"])
+
+        regions = [region for region in regions if region != ""]
+        topics = [topic for topic in topics if topic != ""]
+
+        if len(regions) == 0:
+            regions = ["기타"]
+
+        if len(topics) == 0:
+            topics = ["기타"]
+
+        for region in regions:
+            for topic in topics:
+                key = (region, topic)
+
+                if key not in candidates:
+                    candidates[key] = {
+                        "count": 0,
+                        "examples": [],
+                    }
+
+                candidates[key]["count"] += 1
+
+                if len(candidates[key]["examples"]) < 3:
+                    candidates[key]["examples"].append(
+                        {
+                            "title": row["title"],
+                            "url": row["url"],
+                            "date": row["published_date"],
+                            "source": row["source"],
+                        }
+                    )
+
+    sorted_candidates = sorted(
+        candidates.items(),
+        key=lambda item: item[1]["count"],
+        reverse=True,
+    )
+
+    return sorted_candidates[:limit]
+
+
+def show_summary_box(df):
+    """주요 이슈 요약 박스를 표시합니다."""
+    summary_df, summary_label = get_summary_base_df(df)
+
+    st.subheader("주요 이슈 요약")
+
+    st.caption(
+        "아래 요약은 AI가 작성한 해설이 아니라, 저장된 기사 수를 기준으로 만든 자동 집계입니다."
+    )
+
+    top_topics = get_top_items(summary_df, "app_topics", limit=5)
+    top_regions = get_top_items(summary_df, "app_regions", limit=5)
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric(
+            label="요약 기준",
+            value=summary_label,
+        )
+
+    with col2:
+        st.metric(
+            label="요약 기준 기사 수",
+            value=f"{len(summary_df)}개",
+        )
+
+    with col3:
+        if len(top_topics) > 0:
+            st.metric(
+                label="가장 많이 나온 주제",
+                value=top_topics[0][0],
+                delta=f"{top_topics[0][1]}건",
+            )
+        else:
+            st.metric(
+                label="가장 많이 나온 주제",
+                value="-",
+            )
+
+    col4, col5 = st.columns(2)
+
+    with col4:
+        st.markdown("**주제별 상위 항목**")
+
+        if len(top_topics) == 0:
+            st.write("집계할 주제가 없습니다.")
+        else:
+            for topic_name, count in top_topics:
+                st.write(f"- {topic_name}: {count}건")
+
+    with col5:
+        st.markdown("**국가/지역별 상위 항목**")
+
+        if len(top_regions) == 0:
+            st.write("집계할 국가/지역이 없습니다.")
+        else:
+            for region_name, count in top_regions:
+                st.write(f"- {region_name}: {count}건")
+
+    st.markdown("#### 주요 이슈 후보")
+
+    issue_candidates = make_issue_candidates(summary_df, limit=5)
+
+    if len(issue_candidates) == 0:
+        st.write("아직 주요 이슈 후보를 만들 만큼의 기사가 없습니다.")
+    else:
+        for index, ((region, topic), data) in enumerate(issue_candidates, start=1):
+            with st.expander(
+                f"{index}. {region} · {topic} ({data['count']}건)",
+                expanded=(index == 1),
+            ):
+                st.write(
+                    "이 항목은 같은 국가/지역과 주제 조합으로 묶인 기사 수를 기준으로 만든 후보입니다."
+                )
+
+                for example in data["examples"]:
+                    title = example["title"]
+                    url = example["url"]
+                    date = example["date"]
+                    source = example["source"]
+
+                    if url:
+                        st.markdown(f"- [{title}]({url})  \n  {date} · {source}")
+                    else:
+                        st.markdown(f"- {title}  \n  {date} · {source}")
 
 
 if "admin_authenticated" not in st.session_state:
@@ -343,54 +643,51 @@ with st.expander("관리자 기능: 뉴스 수집 실행"):
         "관리자 비밀번호를 입력하면 GitHub Actions의 뉴스 수집 작업을 앱에서 실행할 수 있습니다."
     )
 
-    admin_password = get_secret("ADMIN_PASSWORD")
+    admin_password = str(get_secret("ADMIN_PASSWORD", "0101")).strip()
 
-    if not admin_password:
-        st.warning("Streamlit Secrets에 ADMIN_PASSWORD가 설정되어 있지 않습니다.")
-    else:
-        password_input = st.text_input(
-            "관리자 비밀번호",
-            type="password",
-            placeholder="관리자 비밀번호 입력",
-        )
+    password_input = st.text_input(
+        "관리자 비밀번호",
+        type="password",
+        placeholder="관리자 비밀번호 입력",
+    )
 
-        if st.button("관리자 확인"):
-            if hmac.compare_digest(password_input, admin_password):
-                st.session_state.admin_authenticated = True
-                st.success("관리자 확인이 완료되었습니다.")
-            else:
-                st.session_state.admin_authenticated = False
-                st.error("비밀번호가 맞지 않습니다.")
+    if st.button("관리자 확인"):
+        if hmac.compare_digest(password_input, admin_password):
+            st.session_state.admin_authenticated = True
+            st.success("관리자 확인이 완료되었습니다.")
+        else:
+            st.session_state.admin_authenticated = False
+            st.error("비밀번호가 맞지 않습니다.")
 
-        if st.session_state.admin_authenticated:
-            st.success("현재 관리자 모드입니다.")
+    if st.session_state.admin_authenticated:
+        st.success("현재 관리자 모드입니다.")
 
-            if st.button("뉴스 수집 실행"):
-                with st.spinner("GitHub Actions에 뉴스 수집 작업을 요청하는 중입니다..."):
-                    success, message = trigger_github_workflow()
+        if st.button("뉴스 수집 실행"):
+            with st.spinner("GitHub Actions에 뉴스 수집 작업을 요청하는 중입니다..."):
+                success, message = trigger_github_workflow()
 
-                if success:
-                    st.success(message)
-                    st.info(
-                        "수집 작업은 GitHub Actions에서 백그라운드로 실행됩니다. "
-                        "보통 1~3분 뒤 saved_articles.csv가 업데이트됩니다. "
-                        "잠시 후 앱을 새로고침해 주세요."
-                    )
-                else:
-                    st.error(message)
-
-            github_repo = get_secret("GITHUB_REPO")
-            workflow_file = get_secret("GITHUB_WORKFLOW_FILE", "collect_news.yml")
-
-            if github_repo:
-                actions_url = (
-                    f"https://github.com/{github_repo}/actions/workflows/{workflow_file}"
+            if success:
+                st.success(message)
+                st.info(
+                    "수집 작업은 GitHub Actions에서 백그라운드로 실행됩니다. "
+                    "보통 1~3분 뒤 saved_articles.csv가 업데이트됩니다. "
+                    "잠시 후 앱을 새로고침해 주세요."
                 )
-                st.link_button("GitHub Actions 실행 상태 보기", actions_url)
+            else:
+                st.error(message)
 
-            if st.button("관리자 모드 해제"):
-                st.session_state.admin_authenticated = False
-                st.rerun()
+        github_repo = str(get_secret("GITHUB_REPO", "")).strip()
+        workflow_file = str(get_secret("GITHUB_WORKFLOW_FILE", "collect_news.yml")).strip()
+
+        if github_repo:
+            actions_url = (
+                f"https://github.com/{github_repo}/actions/workflows/{workflow_file}"
+            )
+            st.link_button("GitHub Actions 실행 상태 보기", actions_url)
+
+        if st.button("관리자 모드 해제"):
+            st.session_state.admin_authenticated = False
+            st.rerun()
 
 
 st.divider()
@@ -419,6 +716,12 @@ if "collected_at" in df.columns and len(df["collected_at"]) > 0:
 
 st.divider()
 
+show_summary_box(df)
+
+st.divider()
+
+st.subheader("기사 탐색")
+
 source_names = ["전체 보기"]
 
 for source in sorted(df["source"].unique()):
@@ -438,8 +741,15 @@ for topic_name in APP_TOPICS.keys():
 
 topic_options.append("기타")
 
+region_options = ["전체 보기"]
 
-col1, col2, col3 = st.columns(3)
+for region_name in REGION_KEYWORDS.keys():
+    region_options.append(region_name)
+
+region_options.append("기타")
+
+
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     selected_source = st.selectbox(
@@ -459,6 +769,12 @@ with col3:
         topic_options,
     )
 
+with col4:
+    selected_region = st.selectbox(
+        "국가/지역 선택",
+        region_options,
+    )
+
 search_keyword = st.text_input(
     "검색어",
     placeholder="예: Myanmar, Vietnam, South China Sea, trade",
@@ -473,14 +789,13 @@ if selected_source != "전체 보기":
 
 articles_to_show = filter_by_period(articles_to_show, selected_period)
 articles_to_show = filter_by_topic(articles_to_show, selected_topic)
+articles_to_show = filter_by_region(articles_to_show, selected_region)
 articles_to_show = filter_by_search_keyword(articles_to_show, search_keyword)
 
 st.write(f"화면에 표시되는 기사 수: **{len(articles_to_show)}개**")
 
 st.caption(
-    "참고: 관련 기사 필터 키워드는 '동남아·ASEAN 관련 기사인지' 판단하는 기준이고, "
-    "주제 키워드는 그 기사를 정치/외교, 안보, 경제/무역 등으로 나누는 기준입니다. "
-    "미얀마는 국가명이므로 주제 선택에서는 제외했습니다."
+    "참고: 미얀마는 국가명이므로 주제 선택에서는 제외했고, 국가/지역 선택에서 고를 수 있게 했습니다."
 )
 
 with st.expander("주제 분류 기준 보기"):
@@ -506,6 +821,29 @@ with st.expander("주제 분류 기준 보기"):
         st.write("이 주제는 아래 키워드 중 하나가 기사 제목이나 요약문에 포함될 때 붙습니다.")
         st.info(", ".join(APP_TOPICS[selected_topic]))
 
+with st.expander("국가/지역 분류 기준 보기"):
+    if selected_region == "전체 보기":
+        st.write("각 국가/지역은 아래 키워드 중 하나가 기사 제목, 요약문, 감지 키워드에 포함될 때 자동으로 붙습니다.")
+
+        for region_name, region_keywords in REGION_KEYWORDS.items():
+            st.markdown(f"**{region_name}**")
+            st.write(", ".join(region_keywords))
+
+        st.markdown("**기타**")
+        st.write("위 국가/지역 키워드가 하나도 감지되지 않은 기사입니다.")
+
+    elif selected_region == "기타":
+        st.write("기타는 아래 국가/지역 키워드가 하나도 감지되지 않은 기사입니다.")
+
+        for region_name, region_keywords in REGION_KEYWORDS.items():
+            st.markdown(f"**{region_name}**")
+            st.write(", ".join(region_keywords))
+
+    else:
+        st.write(f"현재 선택한 국가/지역은 **{selected_region}**입니다.")
+        st.write("이 국가/지역은 아래 키워드 중 하나가 기사 제목, 요약문, 감지 키워드에 포함될 때 붙습니다.")
+        st.info(", ".join(REGION_KEYWORDS[selected_region]))
+
 with st.expander("현재 사용 중인 RSS 출처 보기"):
     for feed in FEEDS:
         st.write(f"- {feed['name']}")
@@ -514,19 +852,36 @@ with st.expander("현재 사용 중인 관련 기사 필터 키워드 보기"):
     st.write(", ".join(KEYWORDS))
 
 with st.expander("현재 기사 목록의 주제별 기사 수 보기"):
-    topic_counts = count_topics(articles_to_show)
+    topic_counts = count_items(articles_to_show, "app_topics")
 
     if len(topic_counts) == 0:
         st.write("현재 조건에 맞는 기사가 없습니다.")
     else:
-        for topic_name, count in topic_counts.items():
+        for topic_name, count in sorted(
+            topic_counts.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        ):
             st.write(f"- {topic_name}: {count}개")
+
+with st.expander("현재 기사 목록의 국가/지역별 기사 수 보기"):
+    region_counts = count_items(articles_to_show, "app_regions")
+
+    if len(region_counts) == 0:
+        st.write("현재 조건에 맞는 기사가 없습니다.")
+    else:
+        for region_name, count in sorted(
+            region_counts.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        ):
+            st.write(f"- {region_name}: {count}개")
 
 st.divider()
 
 if len(articles_to_show) == 0:
     st.warning("현재 선택한 조건에 맞는 기사가 없습니다.")
-    st.info("검색어를 지우거나, 기간/출처/주제 조건을 넓혀보세요.")
+    st.info("검색어를 지우거나, 기간/출처/주제/국가·지역 조건을 넓혀보세요.")
 else:
     for _, article in articles_to_show.iterrows():
         with st.container():
@@ -536,6 +891,9 @@ else:
 
             if article["app_topics"]:
                 st.write(f"**주제:** {article['app_topics']}")
+
+            if article["app_regions"]:
+                st.write(f"**국가/지역:** {article['app_regions']}")
 
             if article["matched_keywords"]:
                 st.write(f"**감지된 키워드:** {article['matched_keywords']}")
