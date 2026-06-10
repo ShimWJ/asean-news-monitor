@@ -134,10 +134,10 @@ def classify_topics(title, summary):
 
 def trigger_github_workflow():
     """GitHub Actions의 collect_news.yml workflow를 실행합니다."""
-    github_token = get_secret("GITHUB_TOKEN")
-    github_repo = get_secret("GITHUB_REPO")
-    github_branch = get_secret("GITHUB_BRANCH", "main")
-    workflow_file = get_secret("GITHUB_WORKFLOW_FILE", "collect_news.yml")
+    github_token = str(get_secret("GITHUB_TOKEN", "")).strip()
+    github_repo = str(get_secret("GITHUB_REPO", "")).strip()
+    github_branch = str(get_secret("GITHUB_BRANCH", "main")).strip()
+    workflow_file = str(get_secret("GITHUB_WORKFLOW_FILE", "collect_news.yml")).strip()
 
     missing_items = []
 
@@ -149,6 +149,29 @@ def trigger_github_workflow():
 
     if len(missing_items) > 0:
         return False, f"Streamlit Secrets에 {', '.join(missing_items)} 값이 없습니다."
+
+    if "여기에" in github_token or "토큰" in github_token:
+        return False, "GITHUB_TOKEN에 예시 문구가 들어가 있습니다. 실제 GitHub 토큰으로 바꿔주세요."
+
+    if "본인" in github_repo or "깃허브" in github_repo:
+        return False, "GITHUB_REPO에 예시 문구가 들어가 있습니다. 예: your-id/asean-news-monitor 형식으로 바꿔주세요."
+
+    try:
+        github_token.encode("ascii")
+        github_repo.encode("ascii")
+        github_branch.encode("ascii")
+        workflow_file.encode("ascii")
+    except UnicodeEncodeError:
+        return False, (
+            "GitHub 설정값에 한글이나 특수 문자가 들어가 있습니다. "
+            "GITHUB_TOKEN, GITHUB_REPO, GITHUB_BRANCH, GITHUB_WORKFLOW_FILE 값을 확인해 주세요."
+        )
+
+    if "/" not in github_repo:
+        return False, "GITHUB_REPO는 your-github-id/asean-news-monitor 형식이어야 합니다."
+
+    if github_repo.startswith("http"):
+        return False, "GITHUB_REPO에는 GitHub 주소 전체가 아니라 your-github-id/asean-news-monitor 형식만 넣어주세요."
 
     api_url = (
         f"https://api.github.com/repos/"
