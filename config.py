@@ -1,0 +1,101 @@
+FEEDS = [
+    {
+        "name": "ASEAN Official News",
+        "url": "https://asean.org/category/news/feed/",
+    },
+    {
+        "name": "CNA Asia",
+        "url": "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=6511",
+    },
+    {
+        "name": "Fulcrum by ISEAS",
+        "url": "https://fulcrum.sg/feed/",
+    },
+]
+
+
+KEYWORDS = [
+    "ASEAN",
+    "Southeast Asia",
+    "South-East Asia",
+    "Myanmar",
+    "Vietnam",
+    "Thailand",
+    "Indonesia",
+    "Malaysia",
+    "Philippines",
+    "Singapore",
+    "Cambodia",
+    "Laos",
+    "Brunei",
+    "Timor-Leste",
+    "East Timor",
+    "South China Sea",
+    "Mekong",
+    "RCEP",
+]
+
+
+TOPICS = {
+    "정치/외교": [
+        "ASEAN summit",
+        "foreign minister",
+        "diplomacy",
+        "dialogue",
+        "statement",
+        "secretary-general",
+        "cooperation",
+        "partnership",
+    ],
+    "안보": [
+        "security",
+        "defence",
+        "defense",
+        "military",
+        "maritime",
+        "South China Sea",
+        "coast guard",
+        "navy",
+        "conflict",
+    ],
+    "경제/무역": [
+        "economy",
+        "economic",
+        "trade",
+        "investment",
+        "supply chain",
+        "RCEP",
+        "digital economy",
+        "market",
+        "growth",
+        "tariff",
+    ],
+    "미얀마": [
+        "Myanmar",
+        "junta",
+        "NUG",
+        "NLD",
+        "Rohingya",
+        "military regime",
+    ],
+    "기후/환경": [
+        "climate",
+        "environment",
+        "energy",
+        "renewable",
+        "green",
+        "flood",
+        "haze",
+        "disaster",
+    ],
+    "보건/사회": [
+        "health",
+        "education",
+        "labour",
+        "labor",
+        "migration",
+        "tourism",
+        "youth",
+        "women",
+    ],
+}
