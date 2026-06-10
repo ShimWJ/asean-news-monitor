@@ -1,9 +1,13 @@
+import hmac
+import json
 import os
+import urllib.error
+import urllib.request
 
 import pandas as pd
 import streamlit as st
 
-from config import FEEDS, KEYWORDS, TOPICS
+from config import FEEDS, KEYWORDS
 
 
 CSV_FILE = "saved_articles.csv"
@@ -22,12 +26,166 @@ COLUMNS = [
 ]
 
 
+APP_TOPICS = {
+    "정치/외교": [
+        "ASEAN summit",
+        "foreign minister",
+        "diplomacy",
+        "dialogue",
+        "statement",
+        "secretary-general",
+        "cooperation",
+        "partnership",
+        "election",
+        "democracy",
+        "sanctions",
+        "junta",
+        "NUG",
+        "NLD",
+        "military regime",
+    ],
+    "안보": [
+        "security",
+        "defence",
+        "defense",
+        "military",
+        "maritime",
+        "South China Sea",
+        "coast guard",
+        "navy",
+        "conflict",
+        "civil war",
+        "armed conflict",
+        "rebel",
+        "insurgent",
+        "resistance forces",
+    ],
+    "경제/무역": [
+        "economy",
+        "economic",
+        "trade",
+        "investment",
+        "supply chain",
+        "RCEP",
+        "digital economy",
+        "market",
+        "growth",
+        "tariff",
+    ],
+    "기후/환경": [
+        "climate",
+        "environment",
+        "energy",
+        "renewable",
+        "green",
+        "flood",
+        "haze",
+        "disaster",
+    ],
+    "보건/사회": [
+        "health",
+        "education",
+        "labour",
+        "labor",
+        "migration",
+        "tourism",
+        "youth",
+        "women",
+        "humanitarian",
+        "refugee",
+        "Rohingya",
+        "human rights",
+    ],
+}
+
+
 st.set_page_config(
     page_title="ASEAN News Monitor",
     page_icon="🌏",
-    layout="wide"
+    layout="wide",
 )
 
+
+def get_secret(name, default=""):
+    """Streamlit Secrets에서 값을 안전하게 가져옵니다."""
+    try:
+        return st.secrets.get(name, default)
+    except Exception:
+        return default
+
+
+def classify_topics(title, summary):
+    """기사 제목과 요약문을 기준으로 앱 화면용 주제를 다시 분류합니다."""
+    text = f"{title} {summary}".lower()
+
+    matched_topics = []
+
+    for topic_name, topic_keywords in APP_TOPICS.items():
+        for keyword in topic_keywords:
+            if keyword.lower() in text:
+                matched_topics.append(topic_name)
+                break
+
+    if len(matched_topics) == 0:
+        matched_topics.append("기타")
+
+    return matched_topics
+
+
+def trigger_github_workflow():
+    """GitHub Actions의 collect_news.yml workflow를 실행합니다."""
+    github_token = get_secret("GITHUB_TOKEN")
+    github_repo = get_secret("GITHUB_REPO")
+    github_branch = get_secret("GITHUB_BRANCH", "main")
+    workflow_file = get_secret("GITHUB_WORKFLOW_FILE", "collect_news.yml")
+
+    missing_items = []
+
+    if not github_token:
+        missing_items.append("GITHUB_TOKEN")
+
+    if not github_repo:
+        missing_items.append("GITHUB_REPO")
+
+    if len(missing_items) > 0:
+        return False, f"Streamlit Secrets에 {', '.join(missing_items)} 값이 없습니다."
+
+    api_url = (
+        f"https://api.github.com/repos/"
+        f"{github_repo}/actions/workflows/{workflow_file}/dispatches"
+    )
+
+    payload = {
+        "ref": github_branch,
+    }
+
+    request = urllib.request.Request(
+        api_url,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {github_token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "asean-news-monitor-streamlit-app",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            status_code = response.status
+
+        if 200 <= status_code < 300:
+            return True, "뉴스 수집 작업을 GitHub Actions에 요청했습니다."
+
+        return False, f"GitHub API 응답이 예상과 다릅니다. 상태 코드: {status_code}"
+
+    except urllib.error.HTTPError as error:
+        error_body = error.read().decode("utf-8", errors="replace")
+        return False, f"GitHub API 오류 {error.code}: {error_body}"
+
+    except Exception as error:
+        return False, f"요청 중 오류가 발생했습니다: {error}"
 
 
 def load_saved_articles():
@@ -51,6 +209,16 @@ def load_saved_articles():
         df["published_iso"],
         errors="coerce",
         utc=True,
+    )
+
+    df["app_topics"] = df.apply(
+        lambda row: ", ".join(
+            classify_topics(
+                row["title"],
+                row["summary"],
+            )
+        ),
+        axis=1,
     )
 
     df = df.sort_values(
@@ -91,7 +259,7 @@ def filter_by_topic(df, selected_topic):
         topics = [topic.strip() for topic in str(topics_text).split(",")]
         return selected_topic in topics
 
-    return df[df["topics"].apply(has_topic)]
+    return df[df["app_topics"].apply(has_topic)]
 
 
 def filter_by_search_keyword(df, search_keyword):
@@ -110,7 +278,7 @@ def filter_by_search_keyword(df, search_keyword):
         + " "
         + df["matched_keywords"].astype(str)
         + " "
-        + df["topics"].astype(str)
+        + df["app_topics"].astype(str)
     ).str.lower()
 
     return df[search_area.str.contains(search_keyword, regex=False, na=False)]
@@ -120,7 +288,7 @@ def count_topics(df):
     """현재 기사 목록에서 주제별 기사 수를 셉니다."""
     topic_counts = {}
 
-    for topics_text in df["topics"]:
+    for topics_text in df["app_topics"]:
         topics = [topic.strip() for topic in str(topics_text).split(",")]
 
         for topic in topics:
@@ -135,6 +303,10 @@ def count_topics(df):
     return topic_counts
 
 
+if "admin_authenticated" not in st.session_state:
+    st.session_state.admin_authenticated = False
+
+
 st.title("ASEAN / Southeast Asia News Monitor")
 
 st.write(
@@ -143,10 +315,67 @@ st.write(
 
 st.divider()
 
+with st.expander("관리자 기능: 뉴스 수집 실행"):
+    st.write(
+        "관리자 비밀번호를 입력하면 GitHub Actions의 뉴스 수집 작업을 앱에서 실행할 수 있습니다."
+    )
+
+    admin_password = get_secret("ADMIN_PASSWORD")
+
+    if not admin_password:
+        st.warning("Streamlit Secrets에 ADMIN_PASSWORD가 설정되어 있지 않습니다.")
+    else:
+        password_input = st.text_input(
+            "관리자 비밀번호",
+            type="password",
+            placeholder="관리자 비밀번호 입력",
+        )
+
+        if st.button("관리자 확인"):
+            if hmac.compare_digest(password_input, admin_password):
+                st.session_state.admin_authenticated = True
+                st.success("관리자 확인이 완료되었습니다.")
+            else:
+                st.session_state.admin_authenticated = False
+                st.error("비밀번호가 맞지 않습니다.")
+
+        if st.session_state.admin_authenticated:
+            st.success("현재 관리자 모드입니다.")
+
+            if st.button("뉴스 수집 실행"):
+                with st.spinner("GitHub Actions에 뉴스 수집 작업을 요청하는 중입니다..."):
+                    success, message = trigger_github_workflow()
+
+                if success:
+                    st.success(message)
+                    st.info(
+                        "수집 작업은 GitHub Actions에서 백그라운드로 실행됩니다. "
+                        "보통 1~3분 뒤 saved_articles.csv가 업데이트됩니다. "
+                        "잠시 후 앱을 새로고침해 주세요."
+                    )
+                else:
+                    st.error(message)
+
+            github_repo = get_secret("GITHUB_REPO")
+            workflow_file = get_secret("GITHUB_WORKFLOW_FILE", "collect_news.yml")
+
+            if github_repo:
+                actions_url = (
+                    f"https://github.com/{github_repo}/actions/workflows/{workflow_file}"
+                )
+                st.link_button("GitHub Actions 실행 상태 보기", actions_url)
+
+            if st.button("관리자 모드 해제"):
+                st.session_state.admin_authenticated = False
+                st.rerun()
+
+
+st.divider()
+
 st.subheader("저장된 ASEAN / 동남아 관련 뉴스")
 
 st.caption(
-    "이제 앱은 RSS를 실시간으로 직접 읽는 대신, 수집 스크립트가 저장한 CSV 파일을 읽습니다."
+    "이 앱은 수집 스크립트가 저장한 saved_articles.csv 파일을 읽어서 기사 목록을 보여줍니다."
 )
 
 df = load_saved_articles()
@@ -154,8 +383,8 @@ df = load_saved_articles()
 if len(df) == 0:
     st.warning("아직 저장된 기사가 없습니다.")
     st.info(
-        "GitHub Actions에서 뉴스 수집 작업을 한 번 실행하면 "
-        "`saved_articles.csv` 파일이 생기고, 여기에 기사가 저장됩니다."
+        "위의 관리자 기능에서 뉴스 수집을 실행하면 "
+        "`saved_articles.csv` 파일이 생성되거나 업데이트됩니다."
     )
     st.stop()
 
@@ -181,7 +410,7 @@ period_options = [
 
 topic_options = ["전체 주제"]
 
-for topic_name in TOPICS.keys():
+for topic_name in APP_TOPICS.keys():
     topic_options.append(topic_name)
 
 topic_options.append("기타")
@@ -227,14 +456,15 @@ st.write(f"화면에 표시되는 기사 수: **{len(articles_to_show)}개**")
 
 st.caption(
     "참고: 관련 기사 필터 키워드는 '동남아·ASEAN 관련 기사인지' 판단하는 기준이고, "
-    "주제 키워드는 그 기사를 정치/외교, 안보, 경제/무역 등으로 나누는 기준입니다."
+    "주제 키워드는 그 기사를 정치/외교, 안보, 경제/무역 등으로 나누는 기준입니다. "
+    "미얀마는 국가명이므로 주제 선택에서는 제외했습니다."
 )
 
 with st.expander("주제 분류 기준 보기"):
     if selected_topic == "전체 주제":
         st.write("각 주제는 아래 키워드 중 하나가 기사 제목이나 요약문에 포함될 때 자동으로 붙습니다.")
 
-        for topic_name, topic_keywords in TOPICS.items():
+        for topic_name, topic_keywords in APP_TOPICS.items():
             st.markdown(f"**{topic_name}**")
             st.write(", ".join(topic_keywords))
 
@@ -244,14 +474,14 @@ with st.expander("주제 분류 기준 보기"):
     elif selected_topic == "기타":
         st.write("기타는 아래 주제 키워드가 하나도 감지되지 않은 기사입니다.")
 
-        for topic_name, topic_keywords in TOPICS.items():
+        for topic_name, topic_keywords in APP_TOPICS.items():
             st.markdown(f"**{topic_name}**")
             st.write(", ".join(topic_keywords))
 
     else:
         st.write(f"현재 선택한 주제는 **{selected_topic}**입니다.")
         st.write("이 주제는 아래 키워드 중 하나가 기사 제목이나 요약문에 포함될 때 붙습니다.")
-        st.info(", ".join(TOPICS[selected_topic]))
+        st.info(", ".join(APP_TOPICS[selected_topic]))
 
 with st.expander("현재 사용 중인 RSS 출처 보기"):
     for feed in FEEDS:
@@ -281,8 +511,8 @@ else:
             st.write(f"**출처:** {article['source']}")
             st.write(f"**발행일:** {article['published_date']}")
 
-            if article["topics"]:
-                st.write(f"**주제:** {article['topics']}")
+            if article["app_topics"]:
+                st.write(f"**주제:** {article['app_topics']}")
 
             if article["matched_keywords"]:
                 st.write(f"**감지된 키워드:** {article['matched_keywords']}")
