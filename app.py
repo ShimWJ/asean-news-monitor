@@ -47,7 +47,6 @@ KEYWORDS = [
     "South China Sea",
     "Mekong",
     "RCEP",
-    "SEA"
 ]
 
 
@@ -132,13 +131,37 @@ st.divider()
 st.subheader("ASEAN / 동남아 관련 뉴스")
 
 st.caption(
-    "The Diplomat은 구독 제한이 있어 제외했고, 우선 공개 전문을 볼 수 있는 출처 위주로 RSS를 연결했습니다."
+    "공개적으로 원문을 볼 수 있는 출처 위주로 RSS를 연결했습니다."
 )
 
 all_articles, filtered_articles = load_rss_from_multiple_sources()
 
 st.write(f"전체 RSS 기사 수: **{len(all_articles)}개**")
 st.write(f"동남아·ASEAN 관련 기사 수: **{len(filtered_articles)}개**")
+
+st.divider()
+
+source_names = ["전체 보기"]
+
+for feed in FEEDS:
+    source_names.append(feed["name"])
+
+selected_source = st.selectbox(
+    "출처 선택",
+    source_names
+)
+
+if selected_source == "전체 보기":
+    articles_to_show = filtered_articles
+else:
+    articles_to_show = []
+
+    for article in filtered_articles:
+        if article["source"] == selected_source:
+            articles_to_show.append(article)
+
+st.write(f"현재 선택한 출처: **{selected_source}**")
+st.write(f"화면에 표시되는 기사 수: **{len(articles_to_show)}개**")
 
 with st.expander("현재 사용 중인 RSS 출처 보기"):
     for feed in FEEDS:
@@ -149,11 +172,11 @@ with st.expander("현재 사용 중인 필터 키워드 보기"):
 
 st.divider()
 
-if len(filtered_articles) == 0:
-    st.warning("현재 RSS 기사 중에서 동남아·ASEAN 관련 키워드가 들어간 기사를 찾지 못했습니다.")
-    st.info("RSS 연결 실패가 아니라, 이번에 가져온 기사 중 조건에 맞는 기사가 없을 수 있습니다.")
+if len(articles_to_show) == 0:
+    st.warning("현재 선택한 조건에 맞는 기사가 없습니다.")
+    st.info("다른 출처를 선택하거나, 나중에 다시 확인해보세요.")
 else:
-    for article in filtered_articles:
+    for article in articles_to_show:
         with st.container():
             st.markdown(f"### {article['title']}")
             st.write(f"**출처:** {article['source']}")
