@@ -29,7 +29,7 @@ st.set_page_config(
 )
 
 
-@st.cache_data(ttl=300)
+
 def load_saved_articles():
     """저장된 기사 CSV를 읽습니다."""
     if not os.path.exists(CSV_FILE):
