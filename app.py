@@ -1,9 +1,25 @@
-import re
-from html import unescape
-from datetime import datetime, timedelta, timezone
+import os
 
+import pandas as pd
 import streamlit as st
-import feedparser
+
+from config import FEEDS, KEYWORDS, TOPICS
+
+
+CSV_FILE = "saved_articles.csv"
+
+COLUMNS = [
+    "title",
+    "source",
+    "published_date",
+    "published_raw",
+    "published_iso",
+    "summary",
+    "url",
+    "matched_keywords",
+    "topics",
+    "collected_at",
+]
 
 
 st.set_page_config(
@@ -13,332 +29,104 @@ st.set_page_config(
 )
 
 
-FEEDS = [
-    {
-        "name": "ASEAN Official News",
-        "url": "https://asean.org/category/news/feed/",
-    },
-    {
-        "name": "CNA Asia",
-        "url": "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=6511",
-    },
-    {
-        "name": "Fulcrum by ISEAS",
-        "url": "https://fulcrum.sg/feed/",
-    },
-]
-
-
-KEYWORDS = [
-    "ASEAN",
-    "Southeast Asia",
-    "South-East Asia",
-    "Myanmar",
-    "Vietnam",
-    "Thailand",
-    "Indonesia",
-    "Malaysia",
-    "Philippines",
-    "Singapore",
-    "Cambodia",
-    "Laos",
-    "Brunei",
-    "Timor-Leste",
-    "East Timor",
-    "South China Sea",
-    "Mekong",
-    "RCEP",
-]
-
-
-TOPICS = {
-    "정치/외교": [
-        "ASEAN summit",
-        "foreign minister",
-        "diplomacy",
-        "dialogue",
-        "statement",
-        "secretary-general",
-        "cooperation",
-        "partnership",
-    ],
-    "안보": [
-        "security",
-        "defence",
-        "defense",
-        "military",
-        "maritime",
-        "South China Sea",
-        "coast guard",
-        "navy",
-        "conflict",
-    ],
-    "경제/무역": [
-        "economy",
-        "economic",
-        "trade",
-        "investment",
-        "supply chain",
-        "RCEP",
-        "digital economy",
-        "market",
-        "growth",
-        "tariff",
-    ],
-    "미얀마": [
-        "Myanmar",
-        "junta",
-        "NUG",
-        "NLD",
-        "Rohingya",
-        "military regime",
-    ],
-    "기후/환경": [
-        "climate",
-        "environment",
-        "energy",
-        "renewable",
-        "green",
-        "flood",
-        "haze",
-        "disaster",
-    ],
-    "보건/사회": [
-        "health",
-        "education",
-        "labour",
-        "labor",
-        "migration",
-        "tourism",
-        "youth",
-        "women",
-    ],
-}
-
-
-def clean_text(text):
-    """RSS 요약문에 들어 있는 HTML 태그를 간단히 제거합니다."""
-    if not text:
-        return ""
-
-    text = re.sub(r"<[^>]+>", "", text)
-    text = unescape(text)
-    return text.strip()
-
-
-def find_matched_keywords(title, summary):
-    """제목과 요약문에서 동남아·ASEAN 관련 키워드를 찾습니다."""
-    text = f"{title} {summary}".lower()
-
-    matched = []
-
-    for keyword in KEYWORDS:
-        if keyword.lower() in text:
-            matched.append(keyword)
-
-    return matched
-
-
-def find_topics(title, summary):
-    """제목과 요약문을 보고 기사 주제를 분류합니다."""
-    text = f"{title} {summary}".lower()
-
-    matched_topics = []
-
-    for topic_name, topic_keywords in TOPICS.items():
-        for keyword in topic_keywords:
-            if keyword.lower() in text:
-                matched_topics.append(topic_name)
-                break
-
-    if len(matched_topics) == 0:
-        matched_topics.append("기타")
-
-    return matched_topics
-
-
-def parse_published_datetime(entry):
-    """RSS 발행일을 파이썬 날짜 형식으로 바꿉니다."""
-    published_parsed = entry.get("published_parsed")
-
-    if published_parsed is None:
-        published_parsed = entry.get("updated_parsed")
-
-    if published_parsed is None:
-        return None
+@st.cache_data(ttl=300)
+def load_saved_articles():
+    """저장된 기사 CSV를 읽습니다."""
+    if not os.path.exists(CSV_FILE):
+        return pd.DataFrame(columns=COLUMNS)
 
     try:
-        return datetime(
-            published_parsed.tm_year,
-            published_parsed.tm_mon,
-            published_parsed.tm_mday,
-            published_parsed.tm_hour,
-            published_parsed.tm_min,
-            published_parsed.tm_sec,
-            tzinfo=timezone.utc,
-        )
-    except Exception:
-        return None
+        df = pd.read_csv(CSV_FILE)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=COLUMNS)
 
+    for column in COLUMNS:
+        if column not in df.columns:
+            df[column] = ""
 
-def format_date(dt, fallback_text):
-    """화면에 보여줄 날짜 형식으로 바꿉니다."""
-    if dt is None:
-        return fallback_text or "날짜 정보 없음"
+    df = df[COLUMNS]
+    df = df.fillna("")
 
-    return dt.strftime("%Y-%m-%d")
-
-
-@st.cache_data(ttl=1800)
-def load_rss_from_multiple_sources():
-    """여러 RSS 피드에서 기사를 가져오고, 관련 기사만 골라냅니다."""
-    all_articles = []
-    filtered_articles = []
-
-    seen_urls = set()
-
-    for feed_info in FEEDS:
-        feed_name = feed_info["name"]
-        feed_url = feed_info["url"]
-
-        feed = feedparser.parse(feed_url)
-
-        for entry in feed.entries[:20]:
-            title = entry.get("title", "제목 없음")
-            summary = clean_text(entry.get("summary", ""))
-            url = entry.get("link", "")
-            published_text = entry.get("published", "날짜 정보 없음")
-            published_datetime = parse_published_datetime(entry)
-
-            if not url:
-                continue
-
-            if url in seen_urls:
-                continue
-
-            seen_urls.add(url)
-
-            matched_keywords = find_matched_keywords(title, summary)
-            topics = find_topics(title, summary)
-
-            article = {
-                "title": title,
-                "source": feed_name,
-                "published_text": published_text,
-                "published_datetime": published_datetime,
-                "display_date": format_date(published_datetime, published_text),
-                "summary": summary,
-                "url": url,
-                "matched_keywords": matched_keywords,
-                "topics": topics,
-            }
-
-            all_articles.append(article)
-
-            if len(matched_keywords) > 0:
-                filtered_articles.append(article)
-
-    old_date = datetime(1970, 1, 1, tzinfo=timezone.utc)
-
-    all_articles.sort(
-        key=lambda article: article["published_datetime"] or old_date,
-        reverse=True,
+    df["published_datetime"] = pd.to_datetime(
+        df["published_iso"],
+        errors="coerce",
+        utc=True,
     )
 
-    filtered_articles.sort(
-        key=lambda article: article["published_datetime"] or old_date,
-        reverse=True,
+    df = df.sort_values(
+        by="published_datetime",
+        ascending=False,
+        na_position="last",
     )
 
-    return all_articles, filtered_articles
+    return df
 
 
-def filter_by_source(articles, selected_source):
-    """선택한 출처에 맞는 기사만 남깁니다."""
-    if selected_source == "전체 보기":
-        return articles
+def filter_by_period(df, selected_period):
+    """선택한 기간에 맞는 기사만 남깁니다."""
+    if selected_period == "전체 보기":
+        return df
 
-    result = []
+    now = pd.Timestamp.now(tz="UTC")
 
-    for article in articles:
-        if article["source"] == selected_source:
-            result.append(article)
+    if selected_period == "최근 7일":
+        cutoff_date = now - pd.Timedelta(days=7)
+    elif selected_period == "최근 30일":
+        cutoff_date = now - pd.Timedelta(days=30)
+    else:
+        return df
 
-    return result
+    return df[
+        df["published_datetime"].notna()
+        & (df["published_datetime"] >= cutoff_date)
+    ]
 
 
-def filter_by_search_keyword(articles, search_keyword):
+def filter_by_topic(df, selected_topic):
+    """선택한 주제에 맞는 기사만 남깁니다."""
+    if selected_topic == "전체 주제":
+        return df
+
+    def has_topic(topics_text):
+        topics = [topic.strip() for topic in str(topics_text).split(",")]
+        return selected_topic in topics
+
+    return df[df["topics"].apply(has_topic)]
+
+
+def filter_by_search_keyword(df, search_keyword):
     """검색어가 들어간 기사만 남깁니다."""
     search_keyword = search_keyword.strip().lower()
 
     if search_keyword == "":
-        return articles
+        return df
 
-    result = []
+    search_area = (
+        df["title"].astype(str)
+        + " "
+        + df["summary"].astype(str)
+        + " "
+        + df["source"].astype(str)
+        + " "
+        + df["matched_keywords"].astype(str)
+        + " "
+        + df["topics"].astype(str)
+    ).str.lower()
 
-    for article in articles:
-        search_area = " ".join(
-            [
-                article["title"],
-                article["summary"],
-                article["source"],
-                " ".join(article["matched_keywords"]),
-                " ".join(article["topics"]),
-            ]
-        ).lower()
-
-        if search_keyword in search_area:
-            result.append(article)
-
-    return result
+    return df[search_area.str.contains(search_keyword, regex=False, na=False)]
 
 
-def filter_by_period(articles, selected_period):
-    """선택한 기간에 맞는 기사만 남깁니다."""
-    if selected_period == "전체 보기":
-        return articles
-
-    now = datetime.now(timezone.utc)
-
-    if selected_period == "최근 7일":
-        cutoff_date = now - timedelta(days=7)
-    elif selected_period == "최근 30일":
-        cutoff_date = now - timedelta(days=30)
-    else:
-        return articles
-
-    result = []
-
-    for article in articles:
-        if article["published_datetime"] is None:
-            continue
-
-        if article["published_datetime"] >= cutoff_date:
-            result.append(article)
-
-    return result
-
-
-def filter_by_topic(articles, selected_topic):
-    """선택한 주제에 맞는 기사만 남깁니다."""
-    if selected_topic == "전체 주제":
-        return articles
-
-    result = []
-
-    for article in articles:
-        if selected_topic in article["topics"]:
-            result.append(article)
-
-    return result
-
-
-def count_topics(articles):
+def count_topics(df):
     """현재 기사 목록에서 주제별 기사 수를 셉니다."""
     topic_counts = {}
 
-    for article in articles:
-        for topic in article["topics"]:
+    for topics_text in df["topics"]:
+        topics = [topic.strip() for topic in str(topics_text).split(",")]
+
+        for topic in topics:
+            if topic == "":
+                continue
+
             if topic not in topic_counts:
                 topic_counts[topic] = 0
 
@@ -355,23 +143,35 @@ st.write(
 
 st.divider()
 
-st.subheader("ASEAN / 동남아 관련 뉴스")
+st.subheader("저장된 ASEAN / 동남아 관련 뉴스")
 
 st.caption(
-    "공개적으로 원문을 볼 수 있는 출처 위주로 RSS를 연결했습니다."
+    "이제 앱은 RSS를 실시간으로 직접 읽는 대신, 수집 스크립트가 저장한 CSV 파일을 읽습니다."
 )
 
-all_articles, filtered_articles = load_rss_from_multiple_sources()
+df = load_saved_articles()
 
-st.write(f"전체 RSS 기사 수: **{len(all_articles)}개**")
-st.write(f"동남아·ASEAN 관련 기사 수: **{len(filtered_articles)}개**")
+if len(df) == 0:
+    st.warning("아직 저장된 기사가 없습니다.")
+    st.info(
+        "GitHub Actions에서 뉴스 수집 작업을 한 번 실행하면 "
+        "`saved_articles.csv` 파일이 생기고, 여기에 기사가 저장됩니다."
+    )
+    st.stop()
+
+st.write(f"저장된 기사 수: **{len(df)}개**")
+
+if "collected_at" in df.columns and len(df["collected_at"]) > 0:
+    last_collected_at = df["collected_at"].max()
+    st.write(f"마지막 수집 시각: **{last_collected_at} UTC**")
 
 st.divider()
 
 source_names = ["전체 보기"]
 
-for feed in FEEDS:
-    source_names.append(feed["name"])
+for source in sorted(df["source"].unique()):
+    if source:
+        source_names.append(source)
 
 period_options = [
     "전체 보기",
@@ -412,9 +212,13 @@ search_keyword = st.text_input(
     placeholder="예: Myanmar, Vietnam, South China Sea, trade",
 )
 
-articles_to_show = filtered_articles
+articles_to_show = df.copy()
 
-articles_to_show = filter_by_source(articles_to_show, selected_source)
+if selected_source != "전체 보기":
+    articles_to_show = articles_to_show[
+        articles_to_show["source"] == selected_source
+    ]
+
 articles_to_show = filter_by_period(articles_to_show, selected_period)
 articles_to_show = filter_by_topic(articles_to_show, selected_topic)
 articles_to_show = filter_by_search_keyword(articles_to_show, search_keyword)
@@ -453,7 +257,7 @@ with st.expander("현재 사용 중인 RSS 출처 보기"):
     for feed in FEEDS:
         st.write(f"- {feed['name']}")
 
-with st.expander("현재 사용 중인 필터 키워드 보기"):
+with st.expander("현재 사용 중인 관련 기사 필터 키워드 보기"):
     st.write(", ".join(KEYWORDS))
 
 with st.expander("현재 기사 목록의 주제별 기사 수 보기"):
@@ -471,17 +275,17 @@ if len(articles_to_show) == 0:
     st.warning("현재 선택한 조건에 맞는 기사가 없습니다.")
     st.info("검색어를 지우거나, 기간/출처/주제 조건을 넓혀보세요.")
 else:
-    for article in articles_to_show:
+    for _, article in articles_to_show.iterrows():
         with st.container():
             st.markdown(f"### {article['title']}")
             st.write(f"**출처:** {article['source']}")
-            st.write(f"**발행일:** {article['display_date']}")
+            st.write(f"**발행일:** {article['published_date']}")
 
             if article["topics"]:
-                st.write(f"**주제:** {', '.join(article['topics'])}")
+                st.write(f"**주제:** {article['topics']}")
 
             if article["matched_keywords"]:
-                st.write(f"**감지된 키워드:** {', '.join(article['matched_keywords'])}")
+                st.write(f"**감지된 키워드:** {article['matched_keywords']}")
 
             if article["summary"]:
                 st.write(article["summary"])
